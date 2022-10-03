@@ -12,8 +12,6 @@ from torch.cuda.amp import GradScaler, autocast
 from tqdm import tqdm
 
 
-from bacteria.code_sjh.models import BasicModule
-
 
 
 def train(model: BasicModule,
