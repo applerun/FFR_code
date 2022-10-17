@@ -1,8 +1,15 @@
 import torch
 from torch import nn
 from deeplearning.models.BasicModule import BasicModule
+
+
+class BaseModelRNN(BasicModule):
+    def __init__(self, numclasses, dr_rate, pretrained, num_hiddens, num_layers, baseModel):
+        super(BaseModelRNN, self).__init__()
+
+
 class RNNModel(BasicModule):
-    def __init__(self, num_hiddens, input_size,):
+    def __init__(self, num_hiddens, input_size, ):
         super(RNNModel, self).__init__()
         # # 定义RNN层
         # 输入的形状为（num_steps, batch_size, input_size）  # input_size 就是 vocab_size
@@ -28,14 +35,14 @@ class RNNModel(BasicModule):
         output = self.linear(Y.reshape((-1, Y.shape[-1])))
         return output, state
 
-    def begin_state(self, device, batch_size=1):
+    def begin_state(self, device, batch_size = 1):
         if not isinstance(self.rnn, nn.LSTM):
             # nn.GRU以张量作为隐状态
             return torch.zeros((self.num_directions * self.rnn.num_layers, batch_size, self.num_hiddens),
-                               device=device)
+                               device = device)
         else:
             # nn.LSTM以元组作为隐状态
             return (torch.zeros((self.num_directions * self.rnn.num_layers, batch_size, self.num_hiddens),
-                                device=device),
+                                device = device),
                     torch.zeros((self.num_directions * self.rnn.num_layers, batch_size, self.num_hiddens),
-                                device=device))
+                                device = device))

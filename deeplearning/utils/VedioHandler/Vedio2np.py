@@ -1,13 +1,15 @@
 import os
 import numpy as np
 import cv2
-
-dataroot = os.path.join("..", "..", "..", "FFR_data")
+from PIL import Image
+import PIL
+dataroot = os.path.join("..", "..", "..","..", "FFR_data")
 
 video_src_src_path = os.path.join(dataroot, "CAG_raw")  # 数据集路径
 label_names = os.listdir(video_src_src_path)
 label2dir = {}
 index = 0
+size = (224,224)
 for label_name in label_names:
     if label_name.startswith('.'):
         continue
@@ -16,9 +18,9 @@ for label_name in label_names:
     video_src_dir = os.path.join(video_src_src_path, label_name)
     video_save_dir = os.path.join(video_src_src_path + '_jpg', label_name)
 
-    if os.path.exists(video_save_dir):
-        os.remove(video_save_dir)
-    os.makedirs(video_save_dir)
+    # if os.path.exists(video_save_dir):
+    #     os.remove(video_save_dir)
+    # os.makedirs(video_save_dir)
 
     videos = os.listdir(video_src_dir)
     # 过滤出avi文件
@@ -44,17 +46,17 @@ for label_name in label_names:
         while success:
             success, frame = cap.read()
             # print('read a new frame:', success)
-
-            params = []
-            params.append(1)
             dstname = os.path.join(each_video_save_full_path, "%d" % (frame_count * 1))
             if os.path.exists(dstname):
                 os.remove(dstname)
             if success:
-                R = frame[:, :, 0]
-                G = frame[:, :, 1]
-                B = frame[:, :, 2]
-                np.save(dstname, B * 0.114 + G * 0.387 + R * 0.299)
+                # img = Image.fromarray(frame)
+                # img = img.resize(size,Image.ANTIALIAS)
+                frame = cv2.resize(frame,size)
+                # frame = np.transpose(frame,(2,0,1))
+
+                # np.save(dstname, B * 0.114 + G * 0.387 + R * 0.299)
+                np.save(dstname, frame)
 
             frame_count += 1
         cap.release()
