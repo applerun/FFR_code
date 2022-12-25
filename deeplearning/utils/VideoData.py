@@ -1,3 +1,5 @@
+import copy
+
 import PIL.Image
 import torch
 from torch.utils.data import Dataset, DataLoader, Subset
@@ -171,8 +173,7 @@ class FFRDataset(Dataset):
             self.labels = self.labels[:val_split_int]
             val_start = int(round(self.k * len(self.imgDirs) / self.k_split))
             val_end = int(round((self.k + 1) * len(self.imgDirs) / self.k_split))
-            # l1 = self.RamanFiles[:val_start] + self.RamanFiles[val_end:]
-            # l2 = self.RamanFiles = self.RamanFiles[val_start:val_end]
+
             # l = list(set(l1) & set(l2))
             if self.mode == "train":
                 self.imgDirs = self.imgDirs[:val_start] + self.imgDirs[val_end:]
@@ -281,7 +282,7 @@ class FFRDataset(Dataset):
         frames = []
         for p2i in path2imgs:   # 读取img
             frame = np.load(os.path.join(imgDir, p2i))
-            # frame = np.transpose(frame,(1,2,0))
+            # image = np.transpose(image,(1,2,0))
             frame = PIL.Image.fromarray(frame)
             frames.append(frame)
 
@@ -296,7 +297,7 @@ class FFRDataset(Dataset):
 
         if 0 < len(frames_tr) < self.timesteps:  # 长度补齐
             for i in range(self.timesteps - len(frames_tr)):
-                frames_tr.append(torch.zeros_like(frames_tr[0]))
+                frames_tr.append(copy.deepcopy(frame))
 
         if len(frames_tr) > 0:
             frames_tr = torch.stack(frames_tr)
