@@ -2,6 +2,7 @@ import torch
 import torchvision.models
 from torch import nn
 from deeplearning.models.BasicModule import *
+from torch.nn.utils.rnn import PackedSequence
 
 
 class BaseModelRNN(BasicModule):
@@ -12,7 +13,7 @@ class BaseModelRNN(BasicModule):
         rnn_num_layers = 1,
     )
 
-    def __init__(self, num_classes, num_hiddens, num_features=512, rnn_num_layers=1, basenet = None, rnn = None,
+    def __init__(self, num_classes, num_hiddens, num_features = 512, rnn_num_layers = 1, basenet = None, rnn = None,
                  dr_rate = 0.2):
         """
         :param num_classes:  最终输出size（分类数）
@@ -51,26 +52,47 @@ class BaseModelRNN(BasicModule):
 
     def create_rnn(self):
         self.rnn = nn.LSTM(input_size = self.num_features, hidden_size = self.num_hiddens,
-                           num_layers = self.rnn_num_layers)
+                           num_layers = self.rnn_num_layers, )
         return
 
-    def forward(self, x):
-        if len(x.shape) == 4:
-            bs, ts, h, w = x.shape
-        elif len(x.shape) == 5:
-            bs, ts, c, h, w = x.shape
+    def forward(self, x):  # x: [b,t,c,w,h]
+        if type(x) == PackedSequence:
+            x: PackedSequence
+            data = x.data
+            if len(data.shape) == 3:
+                _, h, w = data.shape
+            elif len(data.shape) == 4:
+                _, c, h, w = data.shape
+            batch_sizes = x.batch_sizes
+            bs = batch_sizes[0]
+            data = x.data
+            ts = len(batch_sizes)
+            tt = 0
+            start = 0
+            end = batch_sizes[tt].item()
+            y = self.basenet(data[start:end])
+            out, hncn = self.rnn(y.unsqueeze(1))  # []
+            for tt in range(1, ts):
+                start = end
+                batchsize_t = batch_sizes[tt].item()
+                end += batchsize_t
+                y = self.basenet(data[start:end])
+                out_, hncn = self.rnn(y.unsqueeze(1), hncn)  # []
+                out = out_ if batchsize_t == bs else torch.vstack((out_, out[batchsize_t:]))
         else:
-            print("unknown x shape")
-            raise ValueError
-        tt = 0
-        y = self.basenet((x[:, tt]))  # [b ]
-        # out, (hn, cn) = self.rnn(y.unsqueeze(1))  # []
-        out, hncn = self.rnn(y.unsqueeze(1))  # []
-        for tt in range(1, ts):
-            y = self.basenet((x[:, tt]))
-            # out, (hn, cn) = self.rnn(y.unsqueeze(1), (hn, cn))
-            out, hncn = self.rnn(y.unsqueeze(1), hncn)
-        # out = self.dropOut(out[:,-1])
+            if len(x.shape) == 4:
+                bs, ts, h, w = x.shape
+            elif len(x.shape) == 5:
+                bs, ts, c, h, w = x.shape
+            else:
+                print("unknown x shape")
+                raise ValueError
+            tt = 0
+            y = self.basenet((x[:, tt]))  # [b, c]
+            out, hncn = self.rnn(y.unsqueeze(1))  # []
+            for tt in range(1, ts):
+                y = self.basenet((x[:, tt]))
+                out, hncn = self.rnn(y.unsqueeze(1), hncn)
         out = self.flatten(out)
         out = self.dropOut(out)
         out = self.fc1(out)
@@ -119,13 +141,13 @@ class RNNModel(BasicModule):
 
 
 class Resnet18LSTM(BaseModelRNN):
-    def __init__(self, num_classes, num_hiddens=100, num_features = 512, rnn_num_layers=1, dr_rate = 0.2):
+    def __init__(self, num_classes, num_hiddens = 100, num_features = 512, rnn_num_layers = 1, dr_rate = 0.2):
         super(Resnet18LSTM, self).__init__(num_classes, num_hiddens, num_features, rnn_num_layers,
                                            dr_rate = dr_rate)
 
 
 class Resnet18GRU(BaseModelRNN):
-    def __init__(self, num_classes, num_hiddens=100, num_features = 512, rnn_num_layers=1, dr_rate = 0.2):
+    def __init__(self, num_classes, num_hiddens = 100, num_features = 512, rnn_num_layers = 1, dr_rate = 0.2):
         super(Resnet18GRU, self).__init__(num_classes, num_hiddens, num_features, rnn_num_layers, dr_rate = dr_rate)
 
     def create_rnn(self):
@@ -134,10 +156,23 @@ class Resnet18GRU(BaseModelRNN):
 
 
 if __name__ == '__main__':
-    input = torch.zeros((4, 60, 3, 224, 224))
+    from deeplearning.utils.VideoData import PadCollate, pack_padded_sequence
+
+    data1 = torch.Tensor(10, 3, 214, 214)
+    data2 = torch.Tensor(5, 3, 214, 214)
+    data3 = torch.Tensor(8, 3, 214, 214)
+    print(data1[:1].shape)
+    P = PadCollate(0)
+    data_pad = torch.Tensor(16, 16, 3, 214, 214)
+    datas = [data1, data2, data3]
+    labels = torch.tensor([0, 1, 0])
+    datas = [(datas[i], labels[i]) for i in range(len(datas))]
+    datas, labels, lengths = P.pad(datas)
+    data_packed = pack_padded_sequence(datas, lengths, batch_first = True)
+
     net0 = Resnet18LSTM(2)
     net1 = Resnet18GRU(2)
-    out0 = net0(input)
-    out1 = net1(input)
+    out0 = net0(data_packed)
+    out1 = net1(data_pad)
     print(out0.shape)
     print(out1.shape)

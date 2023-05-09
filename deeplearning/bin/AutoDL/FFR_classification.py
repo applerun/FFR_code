@@ -1,5 +1,3 @@
-import builtins
-
 import torch
 from torch import nn, optim
 import visdom
@@ -216,7 +214,7 @@ def main():  # 训练各种类型的网络并保存结果
         transforms.ToTensor(),
     ])
     test_transformer = transforms.ToTensor()
-    dataroot = os.path.join("..", "..", "..", "FFR_data", "CAG_raw_jpg")
+    dataroot = os.path.join(projectroot, "..", "FFR_data", "CAG_raw_jpg")
     vis = visdom.Visdom()
     db_cfg = dict(
         dataroot = dataroot, k_split = k_split,

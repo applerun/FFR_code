@@ -9,7 +9,6 @@ import seaborn
 def plt_res(pltdir,
             res,
             val_db,
-            test_db,
             informations: str = None):
     """
 
@@ -32,7 +31,7 @@ def plt_res(pltdir,
     :param informations:
     :return:
     """
-    if informations is None:
+    if informations is None or "":
         informations = ""
     elif not informations.endswith("_"):
         informations += "_"
@@ -42,8 +41,11 @@ def plt_res(pltdir,
     plt_loss_acc(pltdir, res, informations)
     plt_res_val(pltdir, res["res_val"], label2name, informations = informations + "val")
     plt_res_val(pltdir, res["res_test"], label2name, informations = informations + "test")
-    # plt_cam(pltdir, res["val_cam"], val_db, "val")
-    # plt_cam(pltdir, res["test_cam"], test_db, "val")
+
+    # heatmap(res["res_val"]["confusion_matrix"], os.path.join(pltdir, "conf_m", "val_confusion_matrix.png"),
+    #         labels = list(val_db.label2name().values()))
+    # heatmap(res["res_test"]["confusion_matrix"], os.path.join(pltdir, "conf_m", "test_confusion_matrix.png"),
+    #         labels = list(val_db.label2name().values()))
 
 
 def heatmap(matrix,
@@ -106,7 +108,7 @@ def plt_res_val(pltdir,
         roc_ax.plot(fpr, tpr)
         roc_ax.set_xlabel("fpr")
         roc_ax.set_ylabel("tpr")
-        roc_fig.savefig(os.path.join(pltdir, informations + "_" + label2name[label] + "_roc.png"))
+        roc_fig.savefig(os.path.join(pltdir,"roc", informations + "_" + label2name[label] + "_roc.png"))
         plt.close(roc_fig)
     confusion_matrix = res["confusion_matrix"]
     n = confusion_matrix.shape[0]
@@ -114,4 +116,4 @@ def plt_res_val(pltdir,
     for label in label2name.keys():
         name = label2name[label]
         ticks[label] = name
-    heatmap(confusion_matrix, informations + "_confusion_matrix.png", labels = ticks)
+    heatmap(confusion_matrix, os.path.join(pltdir,informations + "_confusion_matrix.png"), labels = ticks)

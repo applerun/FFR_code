@@ -1,4 +1,7 @@
+import os
+
 import torch
+import tqdm
 from torch import nn, optim
 import visdom
 from deeplearning.utils.DataLoader import MultiEpochsDataLoader as DataLoader
@@ -12,23 +15,24 @@ from torchvision import models
 import time
 import csv
 import numpy as np
-import pysnooper
+# import pysnooper
 import warnings
 
 # 环境
-projectroot = "../.."
+projectroot = "../../.."
+
 
 # 记录
-logfile = os.path.join(projectroot, "log", "ffr", "FFR_classification", time.strftime("%Y-%m-%d-%H_%M_%S") + ".txt")
-if not os.path.isdir(os.path.dirname(logfile)):
-    os.makedirs(os.path.dirname(logfile))
-with open(logfile, "w") as f:
-    pass
+# logfile = os.path.join(projectroot, "log", "ffr", "FFR_classification", time.strftime("%Y-%m-%d-%H_%M_%S") + ".txt")
+# if not os.path.isdir(os.path.dirname(logfile)):
+#     os.makedirs(os.path.dirname(logfile))
+# with open(logfile, "w") as f:
+#     pass
 
 
-@pysnooper.snoop(
-    logfile,
-    prefix = "--*--")
+# @pysnooper.snoop(
+#     logfile,
+#     prefix = "--*--")
 def main_train(
         net: BasicModule,
         train_db,
@@ -38,11 +42,11 @@ def main_train(
         lr = 0.0001,
         batchsz = 4,
         epochs = 100,
-        epo_interv = 1,
+        epo_interv = 10,
         numworkers = 4,
         vis = None,
         modelname = None,
-        net_save_dir = os.path.join(projectroot, "checkpoints", "Default"),
+        net_save_dir = os.path.join(projectroot, "checkpoints", "Default", os.path.basename(__file__).split(".")[0]),
         criteon = nn.CrossEntropyLoss(),
         verbose = False,
         k = 0,
@@ -54,11 +58,12 @@ def main_train(
     if not modelname is None:
         net.set_model_name(modelname)
 
+    P = VideoData.PadCollate()
     # create loaders\
     train_loader = DataLoader(train_db, batch_size = batchsz, shuffle = True, num_workers = numworkers,
-                              pin_memory = True)
-    val_loader = DataLoader(val_db, batch_size = batchsz, num_workers = numworkers)
-    test_loader = DataLoader(test_db, batch_size = batchsz, num_workers = numworkers)
+                              pin_memory = True, collate_fn = P)
+    val_loader = DataLoader(val_db, batch_size = batchsz, num_workers = numworkers, collate_fn = P)
+    test_loader = DataLoader(test_db, batch_size = batchsz, num_workers = numworkers, collate_fn = P)
 
     # optimizer
     optimizer = optim.Adam(net.parameters(), lr = lr)
@@ -77,14 +82,11 @@ def main_train(
 
     if not os.path.isdir(net_save_dir):
         os.makedirs(net_save_dir)
-    net_save_path = os.path.join(net_save_dir, net.model_name + ".mdl")
 
-    if not os.path.exists(net_save_path):
-        with open(net_save_path, "w", newline = ""):
-            pass
-
-    print("start training")
+    # print("start training")
+    # print("0/{}".format(epochs), end = "")
     for epoch in range(epochs):
+        # print("\r{}/{}".format(epoch+1, epochs), end = "")
         loss = iterator.train(net, lr, device, train_loader, criteon, optimizer, epoch, mixed = False,
                               verbose = verbose)
         vis.line([loss.item()], [global_step], win = "loss_" + str(k), update = "append")
@@ -111,7 +113,12 @@ def main_train(
             vis.line([val_acc], [global_step], win = "val_acc_" + str(k), update = "append")
             vis.line([train_acc], [global_step], win = "train_acc_" + str(k), update = "append")
             # vis.line([test_acc], [global_step], win = "test_acc_" + str(k), update = "append")
-            if val_acc >= best_acc and epoch > epochs / 5:
+            if val_acc >= best_acc and epoch > epochs / 20:
+                net_save_path = os.path.join(net_save_dir, net.model_name + "_{}.mdl".format(epoch))
+
+                if not os.path.exists(net_save_path):
+                    with open(net_save_path, "w", newline = ""):
+                        pass
                 best_epoch = epoch
                 best_acc = val_acc
                 net.save(net_save_path)
@@ -131,7 +138,7 @@ def main_train(
         #     )
         #     batch_plt(sample2acc_train, global_step, win = "val_acc_each_sample" + str(k),
         #               update = None if global_step <= epo_interv else "append", viz = vis)
-
+    print("{}/{}".format(epochs, epochs), "done")
     # 测试集
     net.load(net_save_path)
 
@@ -201,7 +208,7 @@ def npsv(pltdir, res, val_db, ):  # 结果保存
 
 
 def main():  # 训练各种类型的网络并保存结果
-    k_split = 6
+    k_split = 1
     n_iter = 1
     basemodel = models.resnet18(pretrained = False)
 
@@ -214,12 +221,13 @@ def main():  # 训练各种类型的网络并保存结果
         transforms.ToTensor(),
     ])
     test_transformer = transforms.ToTensor()
-    dataroot = os.path.join("..", "..", "..", "FFR_data", "CAG_raw_jpg")
+    dataroot = os.path.join(projectroot, "..", "FFR_data", "CAG_raw_jpg")
     vis = visdom.Visdom()
     db_cfg = dict(
-        dataroot = dataroot, k_split = k_split,
-        t_v_t = [1.0, 0.0, 0.0],
-        timesteps = 30,
+        dataroot = dataroot,  # k_split = k_split,
+        t_v_t = [0.6, 0.2, 0.2],
+        timesteps = None,
+        max_timestep = 100,
     )
     train_cfg = dict(
         device = device,
@@ -227,7 +235,7 @@ def main():  # 训练各种类型的网络并保存结果
         vis = vis,
         modelname = modelname,
         batchsz = 4,
-
+        numworkers = 4,
     )
 
     # 模型配置
@@ -238,18 +246,14 @@ def main():  # 训练各种类型的网络并保存结果
         rnn = nn.LSTM, num_features = 512,
         rnn_num_layers = 1,
     )
-    # dict(
-    #     num_classes = 2, dr_rate = 0.2, num_hiddens = 100, baseModel = None, rnn = None, num_features = 100,
-    #     rnn_num_layers = 1,
-    # )
 
     # 保存配置
     recorddir = "Record_" + time.strftime("%Y-%m-%d-%H_%M_%S")
     recorddir = os.path.join(projectroot, "results", "ffr", recorddir)
     if not os.path.isdir(recorddir):
         os.makedirs(recorddir)
-        train8val(k_split, CNN_Model, recorddir, db_cfg, train_transformer, test_transformer, n_iter, train_cfg,
-                  cnn_model_cfg, device)
+    train8val(k_split, CNN_Model, recorddir, db_cfg, train_transformer, test_transformer, n_iter, train_cfg,
+              cnn_model_cfg, device)
 
 
 def train8val(k_split, CNN_Model, recorddir, db_cfg, train_transformer, test_transformer, n_iter, train_cfg,
@@ -273,6 +277,8 @@ def train8val(k_split, CNN_Model, recorddir, db_cfg, train_transformer, test_tra
             sfpath = "Raman_" + str(n) + ".csv"
             train_db = VideoData.FFRDataset(**db_cfg, transform = train_transformer, k = k, sfpath = sfpath)
             val_db = VideoData.FFRDataset(**db_cfg, mode = "val", transform = test_transformer, k = k, sfpath = sfpath)
+            test_db = VideoData.FFRDataset(**db_cfg, mode = "test", transform = test_transformer, k = k,
+                                           sfpath = sfpath)
             assert len(train_db) > 0 and len(val_db) > 0, "empty database"
 
             # 创建网络
@@ -281,10 +287,12 @@ def train8val(k_split, CNN_Model, recorddir, db_cfg, train_transformer, test_tra
                 net,
                 train_db,
                 val_db,
-                val_db,
+                test_db,
                 **train_cfg,
+
             )
             pltdir = os.path.join(recorddir, "n-{}-k-{}".format(n, k))
+            net.save(os.path.join(pltdir, net.model_name + ".mdl"))
             if not os.path.isdir(pltdir):
                 os.makedirs(pltdir)
 
@@ -301,7 +309,7 @@ def train8val(k_split, CNN_Model, recorddir, db_cfg, train_transformer, test_tra
             i += 1
             print(i, "/", n_iter * k_split)
 
-            plt_res(pltdir, res, val_db, val_db, informations = None)
+            plt_res(pltdir, res, val_db, informations = None)
             npsv(pltdir, res, val_db, )
             conf_m_v += res["res_val"]["confusion_matrix"]
             conf_m_t += res["res_test"]["confusion_matrix"]

@@ -2,10 +2,69 @@ import copy
 
 import PIL.Image
 import torch
-from torch.utils.data import Dataset, DataLoader, Subset
+import tqdm
+from torch.utils.data import Dataset, Subset
 import os, random, csv, glob
 import numpy as np
 import torchvision.transforms as transforms
+from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
+
+
+def pad_tensor(vec, pad, dim):
+    """
+    args:
+        vec - tensor to pad
+        pad - the size to pad to
+        dim - dimension to pad
+
+    return:
+        a new tensor padded to 'pad' in dimension 'dim'
+    """
+    pad_size = list(vec.shape)
+    pad_size[dim] = pad - vec.size(dim)
+    return torch.cat([vec, torch.zeros(*pad_size)], dim = dim)
+
+
+class PadCollate:
+    """
+    a variant of callate_fn that pads according to the longest sequence in
+    a batch of sequences
+    """
+
+    def __init__(self, dim = 0):
+        """
+        args:
+            dim - the dimension to be padded (dimension of time in sequences)
+        """
+        self.dim = dim
+
+    def pad(self, batch):
+        """
+        args:
+            batch - list of (tensor, label)
+
+        reutrn:
+            xs - a tensor of all examples in 'batch' after padding
+            ys - a LongTensor of all labels in batch
+        """
+        # find longest sequence
+        lens = [x[0].shape[self.dim] for x in batch]
+        max_len = max(lens)
+        newl = list(zip(lens, batch))
+        newl = sorted(newl, key = lambda x: x[0], reverse = True)
+        newl = zip(*newl)
+        lens, batch = newl
+        # pad according to max_len
+        batch = [(pad_tensor(x, pad = max_len, dim = self.dim), y) for (x, y) in batch]
+        # stack all
+        xs = torch.stack(tuple(x[0] for x in batch), dim = 0)
+        ys = torch.LongTensor(tuple(x[1] for x in batch))
+        return xs, ys, lens
+
+    def __call__(self, batch):
+        xs, ys, lengths = self.pad(batch)
+        xs = pack_padded_sequence(xs, lengths, batch_first = True)
+        return xs, ys
 
 
 class FFRDataset(Dataset):
@@ -24,7 +83,8 @@ class FFRDataset(Dataset):
                  k: int = 0,
                  ratio: dict = None,
                  timesteps = None,
-                 timesteps_random = False
+                 timesteps_random = False,
+                 max_timestep = -1,
                  ):
         """
 
@@ -42,6 +102,7 @@ class FFRDataset(Dataset):
         :param k: 第k次k-折交叉验证
         :param ratio: 降/过采样
         :param timesteps: 视频长度
+        :param timesteps_random: 随机截取视频位置
         """
         super(FFRDataset, self).__init__()
         self.timesteps = timesteps
@@ -75,9 +136,8 @@ class FFRDataset(Dataset):
         self.xs = None
         self.imgDirs = []
         self.labels = []
-        self.Datas = []
         self.ratio = ratio
-
+        self.max_timestep = max_timestep
         for name in sorted(os.listdir(dataroot)):
             if not os.path.isdir(os.path.join(dataroot, name)):
                 continue
@@ -222,18 +282,35 @@ class FFRDataset(Dataset):
         """
         data_each_label = {}
         for i in range(len(self.name2label)):
-            data_each_label[i] = None
+            if self.timesteps is not None:
+                data_each_label[i] = None
+            else:
+                data_each_label[i] = []
+
         for i in range(self.__len__()):
             video, label = self[i]
-            video = torch.unsqueeze(video, dim = 0)
-            if data_each_label[label.item()] is None:
-                data_each_label[label.item()] = video
+            print("\r{}/{}".format(i + 1, len(self)), end = "")
+            if self.timesteps is not None:
+                video = torch.unsqueeze(video, dim = 0)
+                if data_each_label[label.item()] is None:
+                    data_each_label[label.item()] = video
+                else:
+                    data_each_label[label.item()] = torch.cat(
+                        (data_each_label[label.item()],
+                         video),
+                        dim = 0
+                    )
             else:
-                data_each_label[label.item()] = torch.cat(
-                    (data_each_label[label.item()],
-                     video),
-                    dim = 0
-                )
+                data_each_label[label.item()].append(video)
+        print("load_done")
+        if self.timesteps is None:
+            print("{}/{}".format(0, len(self.name2label)), end = "")
+            for i in range(len(self.name2label)):
+                data_each_label[i] = [(data_each_label[i][x], torch.tensor(i)) for x in data_each_label[i]]
+                data_each_label[i], _, lens = PadCollate().pad(data_each_label[i])
+                data_each_label[i] = pack_padded_sequence(data_each_label[i], lens)
+                print("\r{}/{}".format(i + 1, len(self.name2label)), end = "")
+            print("")
         for k in data_each_label.keys():
             if data_each_label[k] is None:
                 continue
@@ -258,19 +335,18 @@ class FFRDataset(Dataset):
         return len(self.imgDirs)
 
     def __getitem__(self, item):
-        global frame
-        if self.timesteps is None:
-            timesteps = None
-            for dir2imgs in self.imgDirs:
-                timesteps_t = len(list(filter(lambda x: x.endswith(self.dataEnd), os.listdir(dir2imgs))))
-                timesteps = timesteps_t if timesteps is None or timesteps_t < timesteps else timesteps
-            if timesteps > 1:
-                self.timesteps = timesteps
         imgDir = self.imgDirs[item]
         path2imgs = os.listdir(imgDir)
         path2imgs = list(filter(lambda x: x.endswith(self.dataEnd), path2imgs))
 
-        if self.timesteps_random:
+        if self.timesteps is "max":
+            l = [len(list(filter(lambda x: x.endswith(self.dataEnd), os.listdir(dir2imgs)))) for dir2imgs in
+                 self.imgDirs]
+            timesteps = max(l)
+            if timesteps > 1:
+                self.timesteps = timesteps
+
+        if self.timesteps_random and self.timesteps is not None:
             start_range = list(range(len(path2imgs) - self.timesteps))
             start = random.sample(start_range, 1)[0]
             path2imgs = path2imgs[start:start + self.timesteps]
@@ -280,24 +356,26 @@ class FFRDataset(Dataset):
         label = self.labels[item]
 
         frames = []
-        for p2i in path2imgs:   # 读取img
+        for p2i in path2imgs:  # 读取img
             frame = np.load(os.path.join(imgDir, p2i))
+            frame = frame.astype("float32")
             # image = np.transpose(image,(1,2,0))
-            frame = PIL.Image.fromarray(frame)
             frames.append(frame)
+            if len(frames) == self.max_timestep:
+                break
 
         seed = np.random.randint(1e9)
         frames_tr = []
-        for frame in frames:    # transform
+        for frame in frames:  # transform
             if self.transform is not None:
                 random.seed(seed)
                 np.random.seed(seed)
                 frame = self.transform(frame)
             frames_tr.append(frame)
 
-        if 0 < len(frames_tr) < self.timesteps:  # 长度补齐
+        if self.timesteps is not None and 0 < len(frames_tr) < self.timesteps:  # 长度补齐
             for i in range(self.timesteps - len(frames_tr)):
-                frames_tr.append(copy.deepcopy(frame))
+                frames_tr.append(copy.deepcopy(frames_tr[-1]))
 
         if len(frames_tr) > 0:
             frames_tr = torch.stack(frames_tr)
@@ -308,13 +386,16 @@ class FFRDataset(Dataset):
 if __name__ == '__main__':
     dataroot = "../../../FFR_data/CAG_raw_jpg"
     train_transformer = transforms.Compose([
-
-        # transforms.ToPILImage(),
-        transforms.RandomHorizontalFlip(p = 0.5),
-        transforms.RandomAffine(degrees = 0, translate = (0.1, 0.1)),
+        # transforms.ToPILImage(mode = "RGB"),
+        # transforms.RandomHorizontalFlip(p = 0.5),
+        # transforms.RandomAffine(degrees = 0, translate = (0.1, 0.1)),
         transforms.ToTensor(),
     ])
+
+    from deeplearning.utils.DataLoader import MultiEpochsDataLoader as DataLoader
+
     dataset = FFRDataset(dataroot, transform = train_transformer)
-    data = dataset[1]
-    label2data = dataset.get_data_sorted_by_label()
-    print(data[0].max())
+    P = PadCollate()
+    loader = tqdm.tqdm(DataLoader(dataset, shuffle = True, collate_fn = P, batch_size = 8, num_workers = 8))
+    for step, (spectrum, label) in enumerate(loader):
+        pass

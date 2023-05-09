@@ -26,12 +26,12 @@ def startVisdomServer(url = "http://localhost:8097"):
             webbrowser.open(url)
         else:
             print("server aready started,url = ", url)
-        return
-    finally:
+    except:
         os.system("start python -m visdom.server")  # 启动服务器
-        time.sleep(2)
+        time.sleep(3)
         print("server started!")
         webbrowser.open(url)
+    finally:
         return
 
 
